@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/k8sgpt-ai/k8sgpt/pkg/analyzer"
-	"github.com/k8sgpt-ai/k8sgpt/pkg/analyzer/shared"
-	"github.com/k8sgpt-ai/k8sgpt/pkg/analyzer/types"
-	appsv1 "k8s.io/api/apps/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/k8sgpt-ai/k8sgpt/pkg/common"
+	//appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -16,59 +14,53 @@ type SingleReplicaAnalyzer struct {
 	client kubernetes.Interface
 }
 
-// New creates a new instance of the SingleReplicaAnalyzer
-func New() analyzer.Analyzer {
+func New() common.IAnalyzer {
 	return &SingleReplicaAnalyzer{}
 }
 
-// SetClient sets the kubernetes client
 func (a *SingleReplicaAnalyzer) SetClient(client kubernetes.Interface) {
 	a.client = client
 }
 
-// Name returns the name of the analyzer
 func (a *SingleReplicaAnalyzer) Name() string {
 	return "single-replica"
 }
 
-// StartAnalysis performs the analysis of deployments
-func (a *SingleReplicaAnalyzer) StartAnalysis(ctx context.Context, _ chan types.AnalyzerResult) error {
-	deployments, err := a.client.AppsV1().Deployments("").List(ctx, v1.ListOptions{})
+func (a *SingleReplicaAnalyzer) Analyze(analyzerCtx common.Analyzer) ([]common.Result, error) {
+	ctx := context.Background()
+	deployments, err := a.client.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to list deployments: %v", err)
+		return nil, fmt.Errorf("failed to list deployments: %v", err)
 	}
 
-	results := make([]types.Result, 0)
+	var results []common.Result
 
 	for _, deployment := range deployments.Items {
 		if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 1 {
-			results = append(results, types.Result{
-				Name:        deployment.Name,
-				Namespace:   deployment.Namespace,
-				Kind:        "Deployment",
-				APIVersion: "apps/v1",
-				Error:      fmt.Sprintf("Deployment %s in namespace %s has only one replica", deployment.Name, deployment.Namespace),
-				Level:      types.Warning,
-				Action: []string{
-					fmt.Sprintf("Consider increasing the number of replicas for deployment '%s' to ensure high availability", deployment.Name),
-					"You can use the following command to scale the deployment:",
-					fmt.Sprintf("kubectl scale deployment %s --replicas=3 -n %s", deployment.Name, deployment.Namespace),
+			results = append(results, common.Result{
+				Kind: "Deployment",
+				Name: deployment.Name,
+				Error: []common.Failure{
+					{
+						Text: fmt.Sprintf("Deployment %s in namespace %s has only one replica", deployment.Name, deployment.Namespace),
+					},
+					{
+						Text: fmt.Sprintf("Consider increasing the number of replicas for deployment '%s' to ensure high availability", deployment.Name),
+					},
+					{
+						Text: "You can use the following command to scale the deployment:",
+					},
+					{
+						Text: fmt.Sprintf("kubectl scale deployment %s --replicas=3 -n %s", deployment.Name, deployment.Namespace),
+					},
 				},
 			})
 		}
 	}
 
-	if len(results) > 0 {
-		resultsChan <- types.AnalyzerResult{
-			Name:    a.Name(),
-			Results: results,
-		}
-	}
-
-	return nil
+	return results, nil
 }
 
-// Configure sets up the analyzer
-func (a *SingleReplicaAnalyzer) Configure(ctx context.Context, _ shared.AnalyzerConfig) error {
+func (a *SingleReplicaAnalyzer) Configure(ctx context.Context, config map[string]string) error {
 	return nil
 }
